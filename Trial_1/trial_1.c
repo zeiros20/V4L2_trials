@@ -40,6 +40,21 @@ struct {
     size_t length;
 } *buffer;
 
+struct v4l2_requestbuffers reqbuf = {0};
+/**
+ * Wrapper around ioctl calls.
+ */
+static int xioctl(int fd, int request, void *arg) {
+  int r;
+
+  do {
+    r = ioctl(fd, request, arg);
+  } while (-1 == r && EINTR == errno);
+
+  return r;
+}
+
+
 
 // VIDIOC_QUERYCAP a request upon pass it initialize the v4l2_capability struce with the opened device capabilities
 // in print_cap as the name says I will print a device caps
@@ -107,6 +122,7 @@ int print_crop_cap(int fd){
 unsigned int print_supp_formates(int fd){
     struct v4l2_fmtdesc fmtdesc = {0};
     fmtdesc.type = DATASTREAM;
+    fmtdesc.index = 0;
     char c, e;
     /*
         Formates can be either compressed or emulated each is held in the fmtdesc.flags 
@@ -162,7 +178,6 @@ int set_foramte(int fd, int width, int height, int pixelformate){
 // not all the buffer size can be aquired so for the very least we will ensure there are at least 5 buffers
 
 int request_buffer(int fd){
-    struct v4l2_requestbuffers reqbuf;
     unsigned int i;
     memset(&reqbuf, 0, sizeof(reqbuf));
     reqbuf.type = DATASTREAM;
@@ -206,19 +221,138 @@ int request_buffer(int fd){
             exit(EXIT_FAILURE);
         }
     }
-    // Cleanup
-    for (i = 0; i < reqbuf.count; i++)
-        munmap(buffer[i].start, buffer[i].length);
-    free(buffer);
 
-    return 0;
+    return reqbuf.count;
 }
 
+static void capture(int fd, int buffer_cnt){
+    enum v4l2_buf_type type;
+    struct v4l2_buffer buff;
+
+    for(int i = 0; i<buffer_cnt; i++){
+        memset(&buff,0, sizeof(buff));
+        buff.type = DATASTREAM;
+        buff.memory = V4L2_MEMORY_MMAP;
+        buff.index = i;
+
+        if (-1 == xioctl(fd, VIDIOC_QBUF, &buff)) {
+            perror("VIDIOC_QBUF");
+            exit(errno);
+        }
+    }
+    type = DATASTREAM;
+    if(xioctl(fd,VIDIOC_STREAMON, &type)==-1){
+        perror("VIDIOC_STREAMON");
+        exit(errno);
+    }
+}
+
+
+static void stop_capturing(int fd) {
+  enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+  if (-1 == xioctl(fd, VIDIOC_STREAMOFF, &type)) {
+    perror("VIDIOC_STREAMOFF");
+    exit(errno);
+  }
+}
+
+static void process_image(const void * pBuffer) {
+  fputc('.', stdout);
+  fflush(stdout);
+}
+
+
+/**
+ * Readout a frame from the buffers.
+ */
+static int read_frame(int fd, int buffer_cnt) {
+  struct v4l2_buffer buff;
+  memset(&buff, 0, sizeof(buff));
+  buff.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  buff.memory = V4L2_MEMORY_MMAP;
+
+  // Dequeue a buffer
+  if (-1 == xioctl(fd, VIDIOC_DQBUF, &buff)) {
+    switch(errno) {
+    case EAGAIN:
+      // No buffer in the outgoing queue
+      return 0;
+    case EIO:
+      // fall through
+    default:
+      perror("VIDIOC_DQBUF");
+      exit(errno);
+    }
+  }
+
+  assert(buff.index < buffer_cnt);
+
+  process_image(buffer[buff.index].start);
+
+  // Enqueue the buffer again
+  if (-1 == xioctl(fd, VIDIOC_QBUF, &buff)) {
+    perror("VIDIOC_QBUF");
+    exit(errno);
+  }
+
+  return 1;
+}
+
+static void main_loop(int fd, int buffer_cnt) {
+  unsigned int count = 100; // Record 100 frames
+  while(count-- > 0) {
+
+    fd_set fds;
+    struct timeval tv;
+    int r;
+    for (;;) {
+      // Clear the set of file descriptors to monitor, then add the fd for our device
+      FD_ZERO(&fds);
+      FD_SET(fd, &fds);
+
+      // Set the timeout
+      tv.tv_sec = 2;
+      tv.tv_usec = 0;
+
+      /**
+       * Arguments are
+       * - number of file descriptors
+       * - set of read fds
+       * - set of write fds
+       * - set of except fds
+       * - timeval struct
+       * 
+       * According to the man page for select, "nfds should be set to the highest-numbered file
+       * descriptor in any of the three sets, plus 1."
+       */
+      r = select(fd + 1, &fds, NULL, NULL, &tv);
+
+      if (-1 == r) {
+        if (EINTR == errno)
+          continue;
+
+	perror("select");
+	exit(errno);
+      }
+
+      if (0 == r) {
+        fprintf (stderr, "select timeout\n");
+        exit(EXIT_FAILURE);
+      }
+
+      if (read_frame(fd,buffer_cnt))
+	// Go to next iterartion of fhe while loop; 0 means no frame is ready in the outgoing queue.
+	break;
+    }
+  }
+  
+}
 
 int main(int argc, char *argv[]){
     long width = strtol(argv[2], NULL,10) , height = strtol(argv[3], NULL, 10);
     const char*  DEVICE = argv[1];
-    int fd = open(DEVICE, O_RDWR);
+    int fd = open("/dev/video0", O_RDWR);
     if(fd < 0){
         perror(DEVICE);
         return errno;
@@ -227,7 +361,15 @@ int main(int argc, char *argv[]){
     print_crop_cap(fd);
     unsigned int pixform =  print_supp_formates(fd);
     set_foramte(fd,(int)width,height, pixform);
-    request_buffer(fd);
+    int buffer_cnt = request_buffer(fd);
+    capture(fd, buffer_cnt);
+    main_loop(fd,buffer_cnt);
+    stop_capturing(fd);
+    for (unsigned int i = 0; i < reqbuf.count; i++)
+    munmap(buffer[i].start, buffer[i].length);
+    free(buffer);
+    close(fd);
+
     close(fd);
     return 0;
 }
