@@ -122,7 +122,7 @@ int print_crop_cap(int fd){
 unsigned int print_supp_formates(int fd){
     struct v4l2_fmtdesc fmtdesc = {0};
     fmtdesc.type = DATASTREAM;
-    fmtdesc.index = 0;
+    fmtdesc.index = 1;
     char c, e;
     /*
         Formates can be either compressed or emulated each is held in the fmtdesc.flags 
@@ -285,6 +285,7 @@ static int read_frame(int fd, int buffer_cnt) {
       exit(errno);
     }
   }
+    
 
   assert(buff.index < buffer_cnt);
 
@@ -332,18 +333,20 @@ static void main_loop(int fd, int buffer_cnt) {
         if (EINTR == errno)
           continue;
 
-	perror("select");
-	exit(errno);
+	    perror("select");
+	    exit(errno);
       }
 
       if (0 == r) {
         fprintf (stderr, "select timeout\n");
         exit(EXIT_FAILURE);
+      } 
+      if (read_frame(fd,buffer_cnt)){
+        int file = open("output.YUV", O_RDWR | O_CREAT, 0666);
+        write(file, buffer[count].start, buffer[count].length);
+	    break; // Go to next iterartion of fhe while loop; 0 means no frame is ready in the outgoing queue.
       }
-
-      if (read_frame(fd,buffer_cnt))
-	// Go to next iterartion of fhe while loop; 0 means no frame is ready in the outgoing queue.
-	break;
+    
     }
   }
   
