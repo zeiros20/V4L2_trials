@@ -342,7 +342,7 @@ static void main_loop(int fd, int buffer_cnt) {
         exit(EXIT_FAILURE);
       } 
       if (read_frame(fd,buffer_cnt)){
-        int file = open("output.YUV", O_RDWR | O_CREAT, 0666);
+        int file = open("output.jpeg", O_RDWR | O_CREAT, 0666);
         write(file, buffer[count].start, buffer[count].length);
 	    break; // Go to next iterartion of fhe while loop; 0 means no frame is ready in the outgoing queue.
       }
