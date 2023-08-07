@@ -142,7 +142,6 @@ int init_buffer(int fd, Buffer **buffer){
             perror("Buffer querying");
             exit(errno);
         }
-        printf("%d\n",i);
         (*(buffer)+i)->length = buff.length;
         //  mmap acts as memory allocation function
         //  put it simply mmap or memory mapping use pointers to exchange data without moving them from their main memory
@@ -261,14 +260,26 @@ void save_image(int fd,Buffer *buffer, int frames, int buffer_cnt){
     char *ext =  ".jpeg";
     for(int i = 0; i<frames;  i++){
         for(;;){
+            monitor_fd(fd);
             if(!get_frame(fd,buffer_cnt)){
             sprintf(name, "%d", i);
             strcat(name,ext);
             int fd = open(name,O_RDWR|O_CREAT, 0666);
-            write(fd,buffer[i].data, buffer[i].length);
+            write(fd,buffer[i%buffer_cnt].data, buffer[i%buffer_cnt].length);
             close(fd);
             }
             break;
         }
+        //process_image(buffer,i);
     }
+}
+
+static void process_image(Buffer *buffer, int i){
+    
+    char filename[15];
+    sprintf(filename, "frame-%d.raw", i);
+    FILE *fp=fopen("lol.mp4","wb");
+    fwrite(buffer[i].data, buffer[i].length, 1, fp);
+    fflush(fp);
+    fclose(fp);
 }

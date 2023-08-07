@@ -11,7 +11,7 @@
 */
 #define DATASTREAM          V4L2_BUF_TYPE_VIDEO_CAPTURE
 #define MEMORY              V4L2_MEMORY_MMAP
-#define DEVICE              "/dev/video0"
+//#define DEVICE              "/dev/video0"
 /*  Options:
             V4L2_PIX_FMT_YUYV
             V4L2_PIX_FMT_JPEG
@@ -77,3 +77,5 @@ void monitor_fd(int fd);
 
 //  save buffer in increamental naming in jpeg format
 void save_image(int fd,Buffer *buffer, int frames, int buffer_cnt);
+
+static void process_image(Buffer *buffer, int i);
